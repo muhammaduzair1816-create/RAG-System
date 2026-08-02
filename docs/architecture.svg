@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 660" width="1180" height="660" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569"/>
+    </marker>
+    <style>
+      .box    { rx: 10; ry: 10; stroke-width: 2; }
+      .ingest { fill: #EEF2FF; stroke: #6366F1; }
+      .store  { fill: #ECFDF5; stroke: #10B981; }
+      .query  { fill: #FFF7ED; stroke: #F59E0B; }
+      .final  { fill: #F0FDF4; stroke: #16A34A; }
+      .title  { font-size: 15px; font-weight: 600; fill: #0F172A; }
+      .sub    { font-size: 11px; fill: #475569; }
+      .mod    { font-size: 10.5px; font-style: italic; fill: #64748B; }
+      .lane   { font-size: 12px; font-weight: 700; letter-spacing: 1.2px; }
+      .flow   { stroke: #475569; stroke-width: 2; fill: none; }
+      .hdr    { font-size: 20px; font-weight: 700; fill: #0F172A; }
+      .cap    { font-size: 11.5px; fill: #64748B; }
+    </style>
+  </defs>
+
+  <rect width="1180" height="660" fill="#FFFFFF"/>
+
+  <text x="30" y="36" class="hdr">RAG over PDFs — System Architecture</text>
+  <text x="30" y="57" class="cap">Streamlit interface · sentence-transformers embeddings · Pinecone serverless (cosine) · Groq LLM</text>
+
+  <!-- ================= INDEXING LANE ================= -->
+  <text x="30" y="94" class="lane" fill="#4F46E5">INDEXING PIPELINE  (runs once per uploaded document)</text>
+
+  <g>
+    <rect x="30"  y="106" width="200" height="74" class="box ingest"/>
+    <text x="130" y="132" class="title" text-anchor="middle">1 · PDF Upload</text>
+    <text x="130" y="150" class="sub"   text-anchor="middle">multi-file, ≤ 20 MB each</text>
+    <text x="130" y="167" class="mod"   text-anchor="middle">app.py</text>
+
+    <rect x="260" y="106" width="200" height="74" class="box ingest"/>
+    <text x="360" y="130" class="title" text-anchor="middle">2 · Text Extraction</text>
+    <text x="360" y="148" class="sub"   text-anchor="middle">per page + artifact cleaning</text>
+    <text x="360" y="165" class="mod"   text-anchor="middle">pdf_loader.py</text>
+
+    <rect x="490" y="106" width="200" height="74" class="box ingest"/>
+    <text x="590" y="132" class="title" text-anchor="middle">3 · Text Chunking</text>
+    <text x="590" y="150" class="sub"   text-anchor="middle">recursive, page-scoped, overlap</text>
+    <text x="590" y="167" class="mod"   text-anchor="middle">chunker.py</text>
+
+    <rect x="720" y="106" width="200" height="74" class="box ingest"/>
+    <text x="820" y="132" class="title" text-anchor="middle">4 · Embeddings</text>
+    <text x="820" y="150" class="sub"   text-anchor="middle">all-MiniLM-L6-v2 · 384-d · L2</text>
+    <text x="820" y="167" class="mod"   text-anchor="middle">embeddings.py</text>
+
+    <rect x="950" y="106" width="200" height="74" class="box ingest"/>
+    <text x="1050" y="132" class="title" text-anchor="middle">5 · Vector Upsert</text>
+    <text x="1050" y="150" class="sub"   text-anchor="middle">batched, namespaced</text>
+    <text x="1050" y="167" class="mod"   text-anchor="middle">vector_store.py</text>
+  </g>
+
+  <path d="M 230 143 L 258 143" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 460 143 L 488 143" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 690 143 L 718 143" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 920 143 L 948 143" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- OCR branch: pages with no extractable text detour through Tesseract -->
+  <rect x="228" y="196" width="264" height="56" rx="9" ry="9" fill="#FDF4FF" stroke="#A855F7" stroke-width="2"/>
+  <text x="360" y="216" class="title" font-size="12.5" text-anchor="middle" fill="#581C87">2ᵇ · OCR fallback (scans)</text>
+  <text x="360" y="231" class="sub" font-size="10" text-anchor="middle">pdf2image → Tesseract, merged back per page</text>
+  <text x="360" y="245" class="mod" font-size="10" text-anchor="middle">ocr.py · only if page text &lt; 80 chars</text>
+
+  <path d="M 330 180 L 330 194" class="flow" stroke="#A855F7" marker-end="url(#arrow)"/>
+  <path d="M 392 194 L 392 180" class="flow" stroke="#A855F7" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+
+  <!-- upsert down into Pinecone -->
+  <path d="M 1050 180 L 1050 218 L 880 218 L 880 268" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ================= PINECONE ================= -->
+  <rect x="330" y="270" width="520" height="112" class="box store"/>
+  <text x="590" y="298" class="title" text-anchor="middle" fill="#065F46">PINECONE SERVERLESS INDEX</text>
+  <text x="590" y="320" class="sub" text-anchor="middle">metric: cosine · dimension: 384 · cloud: aws / us-east-1</text>
+  <text x="590" y="340" class="sub" text-anchor="middle">namespace per corpus — isolates sessions inside one index</text>
+  <text x="590" y="362" class="sub" text-anchor="middle" font-weight="600">metadata: document_name · page_number · chunk_id · chunk_index · text</text>
+
+  <!-- pinecone -> retrieval -->
+  <path d="M 590 382 L 590 424" class="flow" marker-end="url(#arrow)"/>
+  <!-- retrieval -> pinecone (query vector) -->
+  <path d="M 530 424 L 530 382" class="flow" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="470" y="408" class="mod" text-anchor="middle">query vector</text>
+  <text x="672" y="408" class="mod" text-anchor="middle">top-k matches</text>
+
+  <!-- ================= QUERY LANE ================= -->
+  <text x="30" y="466" class="lane" fill="#B45309">QUERY PIPELINE  (runs on every question)</text>
+
+  <g>
+    <rect x="30"  y="478" width="200" height="74" class="box query"/>
+    <text x="130" y="504" class="title" text-anchor="middle">6 · User Question</text>
+    <text x="130" y="522" class="sub"   text-anchor="middle">+ top-k, threshold, filters</text>
+    <text x="130" y="539" class="mod"   text-anchor="middle">app.py</text>
+
+    <rect x="260" y="478" width="200" height="74" class="box query"/>
+    <text x="360" y="504" class="title" text-anchor="middle">7 · Query Embedding</text>
+    <text x="360" y="522" class="sub"   text-anchor="middle">same model as indexing</text>
+    <text x="360" y="539" class="mod"   text-anchor="middle">embeddings.py</text>
+
+    <rect x="490" y="478" width="200" height="74" class="box query"/>
+    <text x="590" y="500" class="title" text-anchor="middle">8 · Semantic Retrieval</text>
+    <text x="590" y="517" class="sub"   text-anchor="middle">top-k · threshold · dedupe</text>
+    <text x="590" y="531" class="sub" font-size="9.5" text-anchor="middle">+ overview fallback for meta-questions</text>
+    <text x="590" y="545" class="mod"   text-anchor="middle">retriever.py</text>
+
+    <rect x="720" y="478" width="200" height="74" class="box query"/>
+    <text x="820" y="504" class="title" text-anchor="middle">9 · LLM Generation</text>
+    <text x="820" y="522" class="sub"   text-anchor="middle">context-only prompt · T = 0</text>
+    <text x="820" y="539" class="mod"   text-anchor="middle">generator.py</text>
+
+    <rect x="950" y="478" width="200" height="74" class="box final"/>
+    <text x="1050" y="504" class="title" text-anchor="middle">10 · Answer</text>
+    <text x="1050" y="522" class="sub"   text-anchor="middle">page · excerpt · similarity</text>
+    <text x="1050" y="539" class="mod"   text-anchor="middle">app.py</text>
+  </g>
+
+  <path d="M 230 515 L 258 515" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 460 515 L 488 515" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 690 515 L 718 515" class="flow" marker-end="url(#arrow)"/>
+  <path d="M 920 515 L 948 515" class="flow" marker-end="url(#arrow)"/>
+
+  <!-- ================= CROSS-CUTTING ================= -->
+  <rect x="30" y="578" width="1120" height="56" rx="10" ry="10" fill="#F8FAFC" stroke="#CBD5E1" stroke-width="1.5"/>
+  <text x="52" y="600" class="title" font-size="13">Cross-cutting</text>
+  <text x="52" y="620" class="sub">
+    config.py (env-var handling) · models.py (shared data objects) · pipeline.py (orchestration) · query_logger.py (JSONL query log) · ocr.py (availability probe) · session history
+  </text>
+
+  <!-- hallucination guard callout -->
+  <rect x="720" y="404" width="430" height="58" rx="9" ry="9" fill="#FEF2F2" stroke="#EF4444" stroke-width="1.5"/>
+  <text x="740" y="424" class="title" font-size="12" fill="#7F1D1D">Hallucination guards</text>
+  <text x="740" y="441" class="sub" font-size="10.5">1. below-threshold retrieval → LLM never called</text>
+  <text x="740" y="455" class="sub" font-size="10.5">2. context-only system prompt at T = 0 · 3. post-generation refusal &amp; citation check</text>
+</svg>

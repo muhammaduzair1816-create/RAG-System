@@ -1,0 +1,11 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.streamlit/secrets.toml
+logs/*.jsonl
+logs/*.log
+.pytest_cache/
+.DS_Store

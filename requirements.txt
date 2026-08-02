@@ -1,0 +1,31 @@
+# --- Interface ---
+streamlit>=1.40.0
+
+# --- PDF text extraction ---
+pypdf>=5.1.0
+
+# --- OCR fallback for scanned / image-only PDFs ---
+# NOTE: these are thin wrappers. They also need two SYSTEM programs that pip
+# cannot install — Tesseract OCR and Poppler. See README §3 for per-OS steps.
+pytesseract>=0.3.13
+pdf2image>=1.17.0
+Pillow>=10.4.0
+
+# --- Embeddings (primary backend) ---
+sentence-transformers>=3.3.0
+
+# --- Speech-to-text for spoken questions ---
+# Preferred backend. Pure pip install; the model downloads on first use.
+# The fallback, openai-whisper, is optional and additionally needs the ffmpeg
+# binary on PATH — install it only if CTranslate2 has no wheel for your Python.
+faster-whisper>=1.1.0
+
+# --- Vector database ---
+pinecone>=5.4.0
+
+# --- LLM API ---
+groq>=0.13.0
+
+# --- Utilities ---
+python-dotenv>=1.0.1
+numpy>=1.26.0
