@@ -235,7 +235,105 @@ The app shows this guidance inline whenever recording fails.
 
 ---
 
-## 5. Project structure
+## 5. Deploying on a 512 MB host (Render Free)
+
+The app is built to start small: **startup is ~74 MB**, and models load only when
+something actually needs them. Nothing heavy — torch, Whisper, the OCR wrappers — is imported
+during startup, not even to check whether it is installed.
+
+### 5.1 Recommended environment
+
+```ini
+EMBEDDING_BACKEND=onnx        # default; ~350 MB less RAM than the torch backend
+EMBEDDING_BATCH_SIZE=16
+ONNX_THREADS=1
+STT_MODEL=tiny.en             # base.en costs ~30 MB more
+STT_KEEP_MODEL_LOADED=false   # release the Whisper model after each transcript
+```
+
+You can also comment out `sentence-transformers` in `requirements.txt`. The default `onnx`
+backend runs the same checkpoint and returns **identical vectors**, so nothing else changes —
+and it removes ~2 GB of torch build artefacts.
+
+### 5.2 Measured footprint
+
+Resident memory, one process, measured stage by stage:
+
+| Stage | Before | After |
+|---|---|---|
+| Startup (Streamlit + app + probes) | ~800 MB → **crash** | **74 MB** |
+| First question answered (model warm) | — | 218 MB |
+| 40-page document indexed | — | 228 MB |
+| Plus a spoken question (`tiny.en`, released after) | — | **434 MB** |
+
+The three changes that mattered, largest first:
+
+1. **The availability probes imported what they were probing.** `check_availability()` for OCR
+   and speech ran on every page render and did a real `import` — costing ~250 MB for
+   faster-whisper and ~70 MB for the OCR wrappers *at startup*. They now use
+   `importlib.util.find_spec`, which resolves a module without executing it.
+2. **ONNX Runtime instead of torch** for the same MiniLM checkpoint: 460 MB → 110 MB.
+3. **ONNX Runtime's CPU memory arena** caches every allocation and never returns it. With it
+   enabled, indexing pushed peak RSS to **879 MB**; disabling it dropped the same work to
+   **204 MB**.
+
+### 5.3 The one real constraint
+
+Embeddings and speech-to-text can both be resident at once, and `faster-whisper` costs ~225 MB
+on import alone (CTranslate2), before any model loads. With `base.en` held in memory the peak
+reaches ~545 MB — over the limit. The settings in §5.1 bring it to **434 MB**, which fits with
+headroom while keeping every feature working.
+
+If you would rather not tune it, `EMBEDDING_BACKEND=pinecone` removes the local embedding model
+entirely (hosted inference, no local weights). That changes the vector dimension to 1024, so set
+`EMBEDDING_DIMENSION=1024` and use a fresh index.
+
+> Figures were measured on Windows; Linux RSS for this stack is typically a little lower, so
+> Render should have at least this much headroom.
+
+### 5.4 Deploying to Render
+
+The repository ships everything Render needs:
+
+| File | Purpose |
+|---|---|
+| `Dockerfile` | Installs Tesseract + Poppler and bakes the models into the image |
+| `render.yaml` | Blueprint: service settings and all non-secret environment variables |
+| `requirements-render.txt` | Deploy manifest without `sentence-transformers`/torch (~2 GB smaller) |
+| `.streamlit/config.toml` | Headless server, and a 25 MB upload cap |
+| `scripts/prefetch_models.py` | Downloads the models during the build |
+
+**Docker is used rather than Render's native Python runtime** because OCR needs the `tesseract`
+and `poppler-utils` system packages, which the native runtime cannot install. On the native
+runtime the app still runs, but the sidebar reports OCR as unavailable.
+
+**Steps**
+
+1. Push the repository to GitHub.
+2. In Render: **New → Blueprint**, select the repo. It reads `render.yaml`.
+3. Add the two secrets when prompted — `PINECONE_API_KEY` and `GROQ_API_KEY`. They are marked
+   `sync: false`, so they are never stored in the repo.
+4. Deploy. The first build takes roughly 5–10 minutes, most of it downloading models.
+5. Open the URL and check the sidebar reads **"OCR ready"** and **"OCR/voice"** are both green.
+
+Render serves over HTTPS, which is what makes the microphone work — browsers only permit
+recording on HTTPS or `localhost`.
+
+### 5.5 Free-tier caveats worth telling a client
+
+* **The instance sleeps after ~15 minutes of inactivity.** The next visitor waits roughly a
+  minute for it to wake. This is the single most visible free-tier limitation; if the client is
+  demoing to someone, load the page a minute beforehand.
+* **The filesystem is ephemeral.** `logs/queries.jsonl` is wiped on every restart. Indexed
+  documents are unaffected — they live in Pinecone, not on the instance. Models survive because
+  they are baked into the image.
+* **One instance, no autoscaling.** Fine for demos and a handful of users; concurrent heavy use
+  (two people indexing large PDFs simultaneously) can still exceed 512 MB.
+* Upgrading to Render's Starter plan removes the sleep and raises the memory ceiling.
+
+---
+
+## 6. Project structure
 
 ```
 .
@@ -266,7 +364,7 @@ FastAPI route, a notebook or a test without changing a line of domain code.
 
 ---
 
-## 6. Pinecone integration
+## 7. Pinecone integration
 
 | Capability | Where | Notes |
 |---|---|---|
@@ -278,7 +376,7 @@ FastAPI route, a notebook or a test without changing a line of domain code.
 
 ---
 
-## 7. Requirement coverage
+## 8. Requirement coverage
 
 ### Functional
 
@@ -310,7 +408,7 @@ domain logic, all secrets read through `config.py`, and typed error classes
 
 ---
 
-## 8. How hallucination is prevented
+## 9. How hallucination is prevented
 
 1. **Retrieval gate.** If no chunk clears the similarity threshold, the LLM is never called and
    the refusal sentence is returned directly. No context, no generation, no opportunity to invent.
@@ -343,7 +441,7 @@ Full analysis in [`docs/technical_report.md`](docs/technical_report.md) §5.3.
 
 ---
 
-## 9. Tests
+## 10. Tests
 
 ```bash
 python -m pytest tests -q
@@ -373,7 +471,7 @@ stubbed, so the suite runs anywhere.
 
 ---
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Cause and fix |
 |---|---|
@@ -390,7 +488,7 @@ stubbed, so the suite runs anywhere.
 
 ---
 
-## 11. Deliverables
+## 12. Deliverables
 
 * **Source code** — this repository.
 * **Architecture diagram** — [`docs/architecture.svg`](docs/architecture.svg) (Mermaid source in [`docs/architecture.md`](docs/architecture.md)).

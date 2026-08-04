@@ -14,8 +14,10 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass
 from functools import lru_cache
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Callable
 
@@ -113,13 +115,16 @@ def _probe(tesseract_cmd: str, poppler_path: str, enabled: bool) -> OCRAvailabil
     if not enabled:
         return OCRAvailability(available=False, reason="OCR is disabled (OCR_ENABLED=false).")
 
-    try:
-        import pytesseract
-        from pdf2image import convert_from_bytes  # noqa: F401 - import is the availability check
-    except ImportError as exc:
+    # Probe with find_spec, never a real import: importing pytesseract and
+    # pdf2image costs ~70 MB and this runs on every page render.
+    missing = [name for name in ("pytesseract", "pdf2image") if find_spec(name) is None]
+    if missing:
         return OCRAvailability(
             available=False,
-            reason=f"Python OCR packages are missing ({exc}). Run `pip install -r requirements.txt`.",
+            reason=(
+                f"Python OCR packages are missing ({', '.join(missing)}). "
+                "Run `pip install -r requirements.txt`."
+            ),
         )
 
     if not tesseract_cmd:
@@ -128,15 +133,26 @@ def _probe(tesseract_cmd: str, poppler_path: str, enabled: bool) -> OCRAvailabil
             reason="The Tesseract OCR program was not found on PATH or in the usual install locations.",
         )
 
-    pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
+    # Ask the binary directly rather than via pytesseract, for the same reason.
     try:
-        version = str(pytesseract.get_tesseract_version())
-    except Exception as exc:  # noqa: BLE001 - missing binary, bad path, permissions
+        completed = subprocess.run(
+            [tesseract_cmd, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - missing binary, bad path, permissions, timeout
         return OCRAvailability(
             available=False,
             tesseract_path=tesseract_cmd,
             reason=f"Tesseract was found at '{tesseract_cmd}' but could not be run: {exc}",
         )
+
+    # First token of the first line, e.g. "tesseract 5.5.0" -> "5.5.0".
+    first_line = (completed.stdout or completed.stderr or "").splitlines()
+    parts = first_line[0].split() if first_line else []
+    version = parts[1] if len(parts) > 1 else "unknown"
 
     if not _poppler_on_path(poppler_path):
         return OCRAvailability(

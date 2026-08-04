@@ -76,11 +76,20 @@ class Settings:
     groq_model: str = field(default_factory=lambda: _env_str("GROQ_MODEL", "llama-3.3-70b-versatile"))
 
     # --- Embeddings ---
-    embedding_backend: str = field(default_factory=lambda: _env_str("EMBEDDING_BACKEND", "sentence-transformers"))
+    # "onnx" runs all-MiniLM-L6-v2 through ONNX Runtime and produces vectors
+    # identical to the torch backend for ~350 MB less resident memory, so it is
+    # the default. "sentence-transformers" keeps the original torch path.
+    embedding_backend: str = field(default_factory=lambda: _env_str("EMBEDDING_BACKEND", "onnx"))
     embedding_model: str = field(
         default_factory=lambda: _env_str("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
     )
     embedding_dimension: int = field(default_factory=lambda: _env_int("EMBEDDING_DIMENSION", 384))
+    # Chunks are encoded one batch at a time; only one batch of activations is
+    # ever resident, so a small batch keeps peak memory flat on a 512 MB host.
+    embedding_batch_size: int = field(default_factory=lambda: _env_int("EMBEDDING_BATCH_SIZE", 16))
+    # ONNX Runtime spawns a thread pool per session; one thread is plenty for
+    # this model size and avoids per-thread arenas.
+    onnx_threads: int = field(default_factory=lambda: _env_int("ONNX_THREADS", 1))
 
     # --- Retrieval defaults (the UI may override these per request) ---
     default_chunk_size: int = field(default_factory=lambda: _env_int("DEFAULT_CHUNK_SIZE", 800))
@@ -113,6 +122,12 @@ class Settings:
     stt_language: str = field(default_factory=lambda: _env_str("STT_LANGUAGE", ""))
     stt_beam_size: int = field(default_factory=lambda: _env_int("STT_BEAM_SIZE", 5))
     stt_max_audio_mb: int = field(default_factory=lambda: _env_int("STT_MAX_AUDIO_MB", 25))
+    stt_cpu_threads: int = field(default_factory=lambda: _env_int("STT_CPU_THREADS", 1))
+    # Keeping the model resident makes repeat questions instant but holds ~90 MB.
+    # Set false on a memory-constrained host to release it after each transcript.
+    stt_keep_model_loaded: bool = field(
+        default_factory=lambda: _env_bool("STT_KEEP_MODEL_LOADED", True)
+    )
 
     # --- Limits ---
     max_pdf_size_mb: int = field(default_factory=lambda: _env_int("MAX_PDF_SIZE_MB", 20))
@@ -133,13 +148,17 @@ class Settings:
             problems.append("PINECONE_API_KEY is not set. Add it to your .env file.")
         if not self.groq_api_key:
             problems.append("GROQ_API_KEY is not set. Add it to your .env file.")
-        if self.embedding_backend not in {"sentence-transformers", "pinecone"}:
+        if self.embedding_backend not in {"onnx", "sentence-transformers", "pinecone"}:
             problems.append(
                 f"EMBEDDING_BACKEND={self.embedding_backend!r} is invalid; "
-                "use 'sentence-transformers' or 'pinecone'."
+                "use 'onnx', 'sentence-transformers' or 'pinecone'."
             )
         if self.embedding_dimension <= 0:
             problems.append("EMBEDDING_DIMENSION must be a positive integer.")
+        if self.embedding_batch_size < 1:
+            problems.append("EMBEDDING_BATCH_SIZE must be at least 1.")
+        if self.onnx_threads < 1:
+            problems.append("ONNX_THREADS must be at least 1.")
         if self.default_chunk_overlap >= self.default_chunk_size:
             problems.append("DEFAULT_CHUNK_OVERLAP must be smaller than DEFAULT_CHUNK_SIZE.")
         if not 0.0 <= self.default_similarity_threshold <= 1.0:

@@ -13,7 +13,7 @@ from typing import Callable, Iterable
 
 from .chunker import chunk_document
 from .config import Settings, get_settings
-from .embeddings import BaseEmbedder, get_embedder
+from .embeddings import BaseEmbedder, EmbeddingError, get_embedder
 from .generator import AnswerGenerator
 from .models import Answer, Document
 from .pdf_loader import load_pdf
@@ -64,18 +64,66 @@ class RAGPipeline:
         if problems:
             raise RuntimeError("Configuration problems:\n  - " + "\n  - ".join(problems))
 
-        self.embedder: BaseEmbedder = get_embedder(self.settings)
-        self.vector_store = PineconeVectorStore(self.settings, dimension=self.embedder.dimension)
-        self.retriever = Retriever(self.vector_store, self.embedder)
-        self.generator = AnswerGenerator(self.settings)
+        # Nothing heavy is built here. Constructing the pipeline must stay cheap
+        # because the interface builds it during the first page render, long
+        # before anyone uploads a document or asks a question. Each component
+        # below is created on first use and then cached for the process.
+        self._embedder: BaseEmbedder | None = None
+        self._vector_store: PineconeVectorStore | None = None
+        self._retriever: Retriever | None = None
+        self._generator: AnswerGenerator | None = None
 
         logger.info(
-            "Pipeline ready (embedder=%s dim=%d, index=%s, llm=%s)",
-            self.embedder.model_name,
-            self.embedder.dimension,
+            "Pipeline configured (embedder=%s/%s, index=%s, llm=%s) — components load on demand",
+            self.settings.embedding_backend,
+            self.settings.embedding_model,
             self.settings.pinecone_index_name,
             self.settings.groq_model,
         )
+
+    # --- Lazily constructed components ------------------------------------
+
+    @property
+    def embedder(self) -> BaseEmbedder:
+        """The embedding model, loaded on first use."""
+        if self._embedder is None:
+            self._embedder = get_embedder(self.settings)
+            if self._embedder.dimension != self.settings.embedding_dimension:
+                raise EmbeddingError(
+                    f"'{self._embedder.model_name}' produces {self._embedder.dimension}-d vectors "
+                    f"but EMBEDDING_DIMENSION is {self.settings.embedding_dimension}. Set "
+                    f"EMBEDDING_DIMENSION={self._embedder.dimension} in your .env and use an index "
+                    "of that dimension."
+                )
+            logger.info(
+                "Embedder ready (%s, %d-d)", self._embedder.model_name, self._embedder.dimension
+            )
+        return self._embedder
+
+    @property
+    def vector_store(self) -> PineconeVectorStore:
+        """The Pinecone client, connected on first use.
+
+        Uses the configured dimension rather than the embedder's, so that
+        reading index stats never drags the embedding model into memory.
+        """
+        if self._vector_store is None:
+            self._vector_store = PineconeVectorStore(
+                self.settings, dimension=self.settings.embedding_dimension
+            )
+        return self._vector_store
+
+    @property
+    def retriever(self) -> Retriever:
+        if self._retriever is None:
+            self._retriever = Retriever(self.vector_store, self.embedder)
+        return self._retriever
+
+    @property
+    def generator(self) -> AnswerGenerator:
+        if self._generator is None:
+            self._generator = AnswerGenerator(self.settings)
+        return self._generator
 
     # --- Ingestion --------------------------------------------------------
 

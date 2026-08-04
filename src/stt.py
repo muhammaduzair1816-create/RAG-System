@@ -22,6 +22,7 @@ dependency.
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import io
 import logging
@@ -29,6 +30,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
+from importlib.util import find_spec
 
 from .config import Settings, get_settings
 
@@ -123,19 +125,14 @@ def _probe(model: str, enabled: bool) -> STTAvailability:
     if not enabled:
         return STTAvailability(available=False, reason="Speech input is disabled (STT_ENABLED=false).")
 
-    try:
-        import faster_whisper  # noqa: F401 - import is the availability check
-
+    # Probe with find_spec, never a real import: importing faster_whisper pulls
+    # in CTranslate2 and costs ~250 MB, and this runs on every page render.
+    if find_spec("faster_whisper") is not None:
         return STTAvailability(available=True, backend="faster-whisper", model=model)
-    except ImportError:
-        logger.info("faster-whisper not installed; trying openai-whisper")
 
-    try:
-        import whisper  # noqa: F401 - import is the availability check
-
+    logger.info("faster-whisper not installed; trying openai-whisper")
+    if find_spec("whisper") is not None:
         return STTAvailability(available=True, backend="openai-whisper", model=model)
-    except ImportError:
-        pass
 
     return STTAvailability(
         available=False,
@@ -158,12 +155,26 @@ def reset_availability_cache() -> None:
 
 
 @lru_cache(maxsize=2)
-def _load_faster_whisper(model: str, device: str, compute_type: str):
+def _load_faster_whisper(model: str, device: str, compute_type: str, cpu_threads: int):
     """Load and cache a faster-whisper model; the first call downloads it."""
     from faster_whisper import WhisperModel
 
     logger.info("Loading faster-whisper model %r (device=%s, compute=%s)", model, device, compute_type)
-    return WhisperModel(model, device=device, compute_type=compute_type)
+    return WhisperModel(
+        model, device=device, compute_type=compute_type, cpu_threads=max(1, cpu_threads)
+    )
+
+
+def release_models() -> None:
+    """Drop cached Whisper models and reclaim their memory.
+
+    Called after each transcription when ``STT_KEEP_MODEL_LOADED`` is false,
+    which trades a reload on the next recording for ~90 MB of resident memory.
+    """
+    _load_faster_whisper.cache_clear()
+    _load_openai_whisper.cache_clear()
+    gc.collect()
+    logger.info("Released cached speech-to-text models")
 
 
 @lru_cache(maxsize=2)
@@ -211,7 +222,12 @@ def validate_audio(data: bytes, settings: Settings | None = None) -> None:
 
 
 def _transcribe_faster_whisper(data: bytes, settings: Settings) -> Transcription:
-    model = _load_faster_whisper(settings.stt_model, settings.stt_device, settings.stt_compute_type)
+    model = _load_faster_whisper(
+        settings.stt_model,
+        settings.stt_device,
+        settings.stt_compute_type,
+        settings.stt_cpu_threads,
+    )
 
     # faster-whisper decodes file-like input directly, so no temp file is needed.
     segments, info = model.transcribe(
@@ -295,6 +311,9 @@ def transcribe(data: bytes, settings: Settings | None = None) -> Transcription:
         raise
     except Exception as exc:  # noqa: BLE001 - decoder, model download and runtime errors
         raise STTError(f"Speech recognition failed: {exc}") from exc
+    finally:
+        if not settings.stt_keep_model_loaded:
+            release_models()
 
     logger.info("Transcribed %d word(s): %r", transcription.word_count, transcription.text[:80])
     return transcription

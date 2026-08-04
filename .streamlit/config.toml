@@ -1,0 +1,25 @@
+# Streamlit settings for a proxied container host (Render, Fly, Cloud Run).
+# Committed on purpose: these are deployment settings, not secrets.
+
+[server]
+headless = true
+
+# Streamlit buffers an upload in memory before any application code runs, and
+# the default cap is 200 MB — enough to exhaust a 512 MB instance on its own.
+# The app rejects PDFs above MAX_PDF_SIZE_MB (20) anyway, so this simply makes
+# the transport limit agree with the application limit.
+maxUploadSize = 25
+maxMessageSize = 25
+
+# Render terminates TLS at its proxy and forwards to the container, so
+# Streamlit's own CORS check adds nothing and rejects legitimate requests.
+enableCORS = false
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+base = "light"
+
+[logger]
+level = "info"

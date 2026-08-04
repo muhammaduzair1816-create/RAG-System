@@ -11,7 +11,18 @@ pytesseract>=0.3.13
 pdf2image>=1.17.0
 Pillow>=10.4.0
 
-# --- Embeddings (primary backend) ---
+# --- Embeddings: default "onnx" backend ---
+# Runs all-MiniLM-L6-v2 through ONNX Runtime. Produces vectors identical to the
+# torch backend while using ~350 MB less RAM, which is what lets the app fit on
+# a 512 MB host. onnxruntime is also a faster-whisper dependency.
+onnxruntime>=1.19.0
+tokenizers>=0.20.0
+huggingface_hub>=0.26.0
+
+# --- Embeddings: optional "sentence-transformers" backend ---
+# Only needed for EMBEDDING_BACKEND=sentence-transformers. It pulls in torch
+# (~2 GB of build artefacts). On a memory- or build-constrained host you can
+# safely comment this out: the default onnx backend produces the same vectors.
 sentence-transformers>=3.3.0
 
 # --- Speech-to-text for spoken questions ---

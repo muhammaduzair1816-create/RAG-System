@@ -1,0 +1,68 @@
+# Render Blueprint. In the Render dashboard: New -> Blueprint -> pick this repo.
+# Everything below is applied automatically except the two secrets, which are
+# marked sync:false and must be entered in the dashboard.
+services:
+  - type: web
+    name: rag-pdf-assistant
+    runtime: docker
+    plan: free
+    region: oregon
+    healthCheckPath: /_stcore/health
+    autoDeploy: true
+
+    envVars:
+      # --- Secrets: set these in the Render dashboard, never in the repo ---
+      - key: PINECONE_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+
+      # --- Pinecone ---
+      - key: PINECONE_INDEX_NAME
+        value: rag-pdf-index
+      - key: PINECONE_CLOUD
+        value: aws
+      - key: PINECONE_REGION
+        value: us-east-1
+
+      # --- LLM ---
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+
+      # --- Embeddings: onnx keeps this ~350 MB lighter than the torch backend
+      #     while producing identical vectors ---
+      - key: EMBEDDING_BACKEND
+        value: onnx
+      - key: EMBEDDING_MODEL
+        value: sentence-transformers/all-MiniLM-L6-v2
+      - key: EMBEDDING_DIMENSION
+        value: "384"
+      - key: EMBEDDING_BATCH_SIZE
+        value: "16"
+      - key: ONNX_THREADS
+        value: "1"
+
+      # --- Speech-to-text: tiny.en and releasing the model after each
+      #     transcript is what keeps peak memory inside 512 MB ---
+      - key: STT_ENABLED
+        value: "true"
+      - key: STT_MODEL
+        value: tiny.en
+      - key: STT_COMPUTE_TYPE
+        value: int8
+      - key: STT_CPU_THREADS
+        value: "1"
+      - key: STT_KEEP_MODEL_LOADED
+        value: "false"
+
+      # --- OCR: the Dockerfile installs tesseract and poppler on PATH ---
+      - key: OCR_ENABLED
+        value: "true"
+      - key: OCR_DPI
+        value: "300"
+      - key: OCR_MAX_PAGES
+        value: "20"
+
+      # --- Limits ---
+      - key: MAX_PDF_SIZE_MB
+        value: "20"

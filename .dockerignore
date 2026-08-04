@@ -1,0 +1,17 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.gitignore
+
+# Secrets must never reach the image; Render injects them as env vars.
+.env
+
+# Not needed at runtime.
+tests/
+docs/
+logs/
+*.md
+!README.md
